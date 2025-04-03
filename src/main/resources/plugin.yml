@@ -1,0 +1,6 @@
+name: Alt Guardian
+version: '1.0-ALPHA'
+main: me.hunter.altGuardian.AltGuardian
+api-version: '1.21'
+authors: [ hun1er ]
+description: Lifesteal recode
