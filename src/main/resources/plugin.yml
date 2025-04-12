@@ -1,6 +1,58 @@
-name: Alt Guardian
-version: '1.0-ALPHA'
-main: me.hunter.altGuardian.AltGuardian
-api-version: '1.21'
-authors: [ hun1er ]
-description: Lifesteal recode
+# Basic information about your plugin
+name: AltGuardian # Corrected name
+main: me.hunter.altguardian.AltGuardianPlugin # Correct main class path
+version: '${project.version}' # Uses version from build.gradle (will resolve to 1.0-ALPHA)
+api-version: '1.21' # Compatible with Minecraft 1.21+ running on Paper/forks
+authors: [ hun1er ] # Your author name
+description: Advanced Alt & Impersonation detection for offline-mode nLogin servers. # Correct description
+website: http://api.mallulifesteal.fun # Optional: Your server's website
+
+# --- Dependencies ---
+# IMPORTANT: AltGuardian requires nLogin to be installed and functional.
+# It relies on nLogin handling the actual password authentication.
+depend:
+  - nLogin
+
+# --- Permissions ---
+# Defines permissions players/admins need to use commands or features.
+permissions:
+  altguardian.admin:
+    description: Grants access to all AltGuardian admin commands.
+    default: op # Only server operators have this by default
+    children:
+      # Gives altguardian.admin holders all the permissions below automatically
+      altguardian.command.check: true
+      altguardian.command.checkip: true
+      altguardian.command.migrate: true
+      altguardian.command.exempt: true
+      altguardian.command.flag: true
+      altguardian.command.reload: true
+      altguardian.notify: true # Allows receiving admin notifications
+
+  altguardian.command.check:
+    description: Allows checking player alt/ip info (/ag check <player>).
+    default: op
+  altguardian.command.checkip:
+    description: Allows checking accounts associated with an IP (/ag checkip <ip>).
+    default: op
+  altguardian.command.migrate:
+    description: Allows starting the nLogin data migration (/ag migrate).
+    default: op
+  altguardian.command.exempt:
+    description: Allows managing IP and username exemptions (/ag exempt ...).
+    default: op
+  altguardian.command.flag:
+    description: Allows manually flagging/unflagging accounts (/ag flag ...).
+    default: op
+  altguardian.command.reload:
+    description: Allows reloading the plugin configuration (/ag reload).
+    default: op
+  altguardian.notify:
+    description: Allows receiving admin notifications about flagged players.
+    default: op
+
+# --- Commands ---
+# Commands are registered via code using ACF (Aikar Command Framework).
+# This section is not strictly needed when using ACF's registration method.
+# It can be left empty or removed.
+commands: {}

@@ -1,0 +1,225 @@
+# ======================================== #
+#         AltGuardian Configuration        #
+# ======================================== #
+
+# --- Debugging ---
+# Enable verbose logging to the console for troubleshooting.
+# This will print detailed information about checks, database queries, etc.
+# WARNING: Can spam the console significantly. Only enable when needed.
+debug-mode: false
+
+# --- Alt Account Detection ---
+alt-detection:
+  enabled: true
+
+  # Maximum allowed nLogin accounts successfully logged in from the same IP address
+  # within the specified timeframe. Set to 0 to disable this specific check.
+  max-accounts-per-ip: 3
+
+  # How far back (in seconds) to check IP history when counting accounts for the limit.
+  # 86400 = 1 day
+  # 604800 = 7 days
+  check-timeframe-seconds: 86400
+
+  # Action to take when the 'max-accounts-per-ip' limit is exceeded during login.
+  # Options:
+  #   FLAG   - Allow login, but flag the account and notify admins (Recommended).
+  #   KICK   - Prevent login and kick the player trying to exceed the limit.
+  #   NOTIFY - Allow login, notify admins, but don't flag the account.
+  #   NONE   - Allow login, do nothing extra.
+  limit-exceeded-action: FLAG
+
+  # --- Exemptions ---
+  # These IPs will be completely ignored by the 'max-accounts-per-ip' check.
+  # Useful for server IPs (if using BungeeCord/Velocity incorrectly), VPN hubs,
+  # or manually verified shared networks (like schools/libraries).
+  exempt-ips:
+    - "127.0.0.1"
+    # - "192.168.1.1"
+
+  # These usernames will not be counted towards the 'max-accounts-per-ip' limit
+  # when they log in, nor will they trigger flags if *they* exceed the limit.
+  # Useful for known/verified admin alt accounts.
+  exempt-usernames:
+    - "AdminAltAccount"
+    # - "AnotherVerifiedAlt"
+
+# --- Impersonation Detection ---
+impersonation:
+  enabled: true
+
+  # String similarity algorithm to use.
+  # Options:
+  #   LEVENSHTEIN - Measures minimum single-character edits (insertions, deletions, substitutions). Good for typos/minor changes. (Recommended)
+  # More algorithms could be added in the future if needed.
+  algorithm: LEVENSHTEIN
+
+  # The sensitivity threshold for the selected algorithm.
+  # For LEVENSHTEIN: Lower number = stricter check (fewer changes allowed).
+  #   1 = Only 1 character difference triggers detection (e.g., "Player1" vs "Playerl"). Very strict.
+  #   2 = Up to 2 characters difference triggers detection (e.g., "Player1" vs "P1ayer1", "Player" vs "_Player_"). Common choice.
+  #   3 = Up to 3 characters difference. Might cause more false positives.
+  levenshtein-threshold: 2
+
+  # Action to take when a potentially impersonating username is detected during registration/first join attempt.
+  # Options:
+  #   PREVENT - Block the player from joining with that name. Forces them to choose another. (Strictest)
+  #   FLAG    - Allow join, but flag the account and notify admins. (Good balance)
+  #   WARN    - Allow join, warn the player their name is similar, notify admins, don't flag.
+  #   NOTIFY  - Allow join, notify admins only.
+  #   NONE    - Allow join, do nothing extra.
+  detection-action-on-register: FLAG
+
+  # Compare usernames ignoring case? (e.g., "Player" vs "player")
+  # Highly recommended to leave this true to catch more impersonation attempts.
+  ignore-case: true
+
+  # --- Exemptions ---
+  # These exact usernames will never be flagged as impersonators,
+  # AND new players can register names similar to these without triggering detection.
+  # Useful for common names, staff members, etc.
+  exempt-usernames:
+    - "admin"
+    - "moderator"
+    - "player"
+    # - "WellKnownPlayer"
+
+# --- Database Settings ---
+database:
+  # How long (in days) to keep IP history records in the database.
+  # Older records will be automatically purged periodically.
+  # Set to 0 to keep records forever (can lead to very large database files over time).
+  ip-history-retention-days: 90
+
+  # Settings for the background task that purges old IP data.
+  purge:
+    # How often (in minutes) the purge task should run.
+    # Running it too often might cause minor performance impact. Once or twice a day is usually fine.
+    # 1440 minutes = 24 hours
+    interval-minutes: 1440
+    # Delay (in minutes) after server startup before the first purge runs.
+    initial-delay-minutes: 10
+
+  # --- Connection Pool (HikariCP) Settings ---
+  # These usually don't need changing unless you have performance issues.
+  pool-settings:
+    maximum-pool-size: 10 # Max concurrent DB connections.
+    minimum-idle: 2      # Min connections kept ready.
+    connection-timeout: 30000 # Max wait time for a connection (ms).
+    idle-timeout: 600000      # Max time a connection can be idle before removal (ms).
+    max-lifetime: 1800000     # Max lifetime of a connection (ms).
+
+# --- Migration Settings ---
+# Settings for the one-time data migration from nLogin.
+migration:
+  # Path to the nLogin database file.
+  # This path is relative to your server's root directory (where server.jar is).
+  # Make sure this points to the correct file used by YOUR nLogin setup!
+  # Common paths: "plugins/nLogin/database.db", "plugins/nLogin/nLogin.db"
+  # If nLogin uses MySQL, migration is more complex and not supported out-of-the-box by this basic config.
+  nlogin-database-path: "plugins/nLogin/database.db"
+
+  # The name of the table inside the nLogin database that stores user data.
+  # Common names: "users", "nlogin_users", "accounts"
+  # You MUST check your nLogin database (e.g., using DB Browser for SQLite) to find the correct table name.
+  nlogin-table-name: "users"
+
+  # The names of the columns within the nLogin table.
+  # You MUST check your nLogin database for the correct column names.
+  nlogin-column-names:
+    username: "username" # Column storing the player's username
+    # Column storing the registration date (often a UNIX timestamp or DATETIME string).
+    # If nLogin doesn't store this, the migration can't import it. Set to "" if not available.
+    registration_date: "regdate"
+    # Column storing the last known IP address. Set to "" if not available.
+    last_ip: "ip"
+
+# --- API Settings ---
+# Settings related to the internal API for other plugins.
+api:
+  # Default timezone ID used when formatting timestamps for display (e.g., in commands).
+  # Uses standard Java Time Zone IDs (e.g., "UTC", "America/New_York", "Europe/London").
+  # The internal API primarily returns raw timestamps (Unix epoch milliseconds).
+  display-timezone: "UTC"
+
+# --- Messages ---
+# Customize messages sent to players and admins. Uses MiniMessage format.
+# Reference: https://docs.adventure.kyori.net/minimessage/format.html
+# Placeholders like {player}, {ip}, {count}, {max}, {similar_to}, {reason} will be replaced automatically.
+messages:
+  prefix: "<gray>[<aqua>AltGuardian<gray>]<reset>" # Prepended to most messages
+
+  # General messages
+  reloaded: "<green>Configuration and messages reloaded successfully."
+  error: "<red>An unexpected error occurred. Please check the console for details."
+  player-only-command: "<red>This command can only be run by a player."
+  no-permission: "<red>You do not have permission to perform this action.</red>"
+  player-not-found-db: "<red>Player '<white>{player}<red>' not found in AltGuardian's database."
+  ip-not-found-db: "<red>No accounts found associated with IP '<white>{ip}<red>'."
+  invalid-ip: "<red>Invalid IP address format: '<white>{ip}<red>'."
+  invalid-number: "<red>Invalid number: '<white>{number}<red>'."
+  console-name: "Console" # Name used when console performs an action
+
+  # Command specific messages
+  check-header: "<aqua>--- AltGuardian Check: <white>{player} <aqua>---"
+  check-ip-header: "<aqua>--- AltGuardian IP Check: <white>{ip} <aqua>---"
+  check-details: " <gray>Registered: <white>{reg_date}</white> | Last Login: <white>{last_login}</white>"
+  check-uuid: " <gray>Offline UUID (at register): <white>{uuid}</white>" # If UUID is stored
+  check-flags: " <gray>Flags: <yellow>{flags}</yellow>"
+  check-no-flags: " <gray>Flags: <green>None</green>"
+  check-ip-history-header: " <gray>Recent IP History ({count}):"
+  check-ip-history-entry: "   <gray>- <white>{ip}</white> (First: {first_used}, Last: {last_used})"
+  check-ip-history-empty: " <gray>No IP history found within retention period."
+  check-potential-alts-header: " <gray>Potential Alts (shared IP):"
+  check-potential-alts-entry: "   <gray>- <white>{alt_player}</white> (Last Seen IP: {ip})"
+  check-potential-alts-empty: " <gray>No potential alts found based on recent IP history."
+  check-ip-accounts-header: " <gray>Accounts using IP <white>{ip}<gray> (recently):"
+  check-ip-accounts-entry: "   <gray>- <white>{player}</white> (Last Seen: {last_used})"
+  check-ip-accounts-empty: " <gray>No accounts recently used this IP."
+
+  reload-command:
+    success: "<green>AltGuardian configuration reloaded."
+
+  migrate-command:
+    start: "<yellow>Starting nLogin data migration... This may take a while. Check console for progress."
+    already-migrated: "<red>Migration appears to have been run before (found existing data). Cannot run again unless database is cleared." # Safety check might be needed
+    nlogin-db-not-found: "<red>Error: nLogin database file not found at '<white>{path}<red>'. Check config.yml."
+    nlogin-table-not-found: "<red>Error: nLogin table '<white>{table}<red>' not found in the database. Check config.yml."
+    nlogin-column-not-found: "<red>Error: nLogin column '<white>{column}<red>' not found in table '<white>{table}<red>'. Check config.yml."
+    progress: "<gray>(Migration) Processed {count} users..."
+    complete: "<green>Migration complete! Successfully processed {count} users. {imported} new accounts added, {updated} existing IPs updated."
+    error: "<red>Migration failed. Check console for detailed errors."
+
+  exempt-command:
+    ip-added: "<green>IP <white>{ip}</white> added to the exemption list."
+    ip-removed: "<green>IP <white>{ip}</white> removed from the exemption list."
+    ip-already-exempt: "<yellow>IP <white>{ip}</white> is already exempt."
+    ip-not-exempt: "<yellow>IP <white>{ip}</white> was not on the exemption list."
+    user-added: "<green>User <white>{player}</white> added to the exemption list."
+    user-removed: "<green>User <white>{player}</white> removed from the exemption list."
+    user-already-exempt: "<yellow>User <white>{player}</white> is already exempt."
+    user-not-exempt: "<yellow>User <white>{player}</white> was not on the exemption list."
+    usage: "<red>Usage: /ag exempt <ip|user> <add|remove> <value>"
+
+  flag-command:
+    added: "<green>Flag '<yellow>{flag}<green>' added to player <white>{player}<green> by <white>{actor}</white>."
+    removed: "<green>Flag '<yellow>{flag}<green>' removed from player <white>{player}<green> by <white>{actor}</white>."
+    already-flagged: "<yellow>Player <white>{player}</yellow> already has the flag '<yellow>{flag}<yellow>'."
+    not-flagged: "<yellow>Player <white>{player}</yellow> does not have the flag '<yellow>{flag}<yellow>'."
+    list-header: "<aqua>Flags for <white>{player}<aqua>:"
+    list-entry: " <gray>- <yellow>{flag}</yellow> (Added: {date})"
+    list-empty: "<green>Player <white>{player}</white> has no flags."
+    usage-add: "<red>Usage: /ag flag add <player> <flag_reason>"
+    usage-remove: "<red>Usage: /ag flag remove <player> <flag_reason>"
+    usage-list: "<red>Usage: /ag flag list <player>"
+
+  # Notifications (sent to players with altguardian.notify permission)
+  admin-notify-alt-limit: "<prefix><gray>[<red>Alt Limit<gray>] <yellow>{player}<gray> ({ip}) exceeded limit ({count}/{max}). Action: <gold>{action}</gold>."
+  admin-notify-impersonation: "<prefix><gray>[<red>Impersonation<gray>] <yellow>{player}<gray> triggered similarity check against <yellow>{similar_to}<gray>. Action: <gold>{action}</gold>."
+  admin-notify-flag-added: "<prefix><gray>[<blue>Flag Added<gray>] <white>{actor}<gray> added flag '<yellow>{flag}<gray>' to <white>{player}<gray>."
+  admin-notify-flag-removed: "<prefix><gray>[<blue>Flag Removed<gray>] <white>{actor}<gray> removed flag '<yellow>{flag}<gray>' from <white>{player}<gray>."
+
+  # Messages shown to the player being affected
+  kick-alt-limit-exceeded: "<red>Disconnected: Too many accounts ({count}/{max}) associated with your connection. Please contact staff if this is an error."
+  warn-impersonation: "<yellow>Warning: Your username '<white>{username}<yellow>' is very similar to '<white>{similar_to}<yellow>'. Please consider changing it to avoid confusion."
+  prevent-impersonation: "<red>Login Failed: Your username '<white>{username}<red>' is too similar to the existing user '<white>{similar_to}<red>'. Please choose a different username."
