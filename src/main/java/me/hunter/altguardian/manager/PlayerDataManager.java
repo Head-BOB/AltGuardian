@@ -19,7 +19,7 @@ public class PlayerDataManager {
 
     private final DatabaseManager databaseManager;
     private final MessageManager messageManager;
-    private final ExecutorService databaseExecutor;
+    private final ExecutorService databaseExecutor; // Still useful for other async ops
     private final Cache<String, Optional<Integer>> accountIdCache;
     private Set<String> allUsernamesCache = ConcurrentHashMap.newKeySet();
     private long lastUsernameCacheUpdateTime = 0;
@@ -33,21 +33,29 @@ public class PlayerDataManager {
                 .maximumSize(5000)
                 .expireAfterAccess(1, TimeUnit.HOURS)
                 .build();
+        // Initial cache population (can still be async on enable)
         refreshAllUsernamesCacheAsync();
     }
 
+    // getOrCreateAccountIdAsync remains asynchronous as it involves potential creation
     public CompletableFuture<Integer> getOrCreateAccountIdAsync(@NotNull String username, long registrationTimeMillis, @Nullable UUID offlineUuid) {
         String lowerUsername = username.toLowerCase();
         Optional<Integer> cachedIdOptional = accountIdCache.getIfPresent(lowerUsername);
         if (cachedIdOptional != null) {
-            return cachedIdOptional.map(CompletableFuture::completedFuture)
-                    .orElseGet(() -> fetchAndCacheAccountId(username, lowerUsername, registrationTimeMillis, offlineUuid));
+            if (cachedIdOptional.isPresent()) {
+                messageManager.logDebug("Account ID cache hit for: " + lowerUsername);
+                return CompletableFuture.completedFuture(cachedIdOptional.get());
+            } else {
+                messageManager.logDebug("Account ID cache negative hit for: " + lowerUsername);
+                // Fall through to DB lookup if negative cache hit
+            }
+        } else {
+            messageManager.logDebug("Account ID cache miss for: " + lowerUsername);
         }
         return fetchAndCacheAccountId(username, lowerUsername, registrationTimeMillis, offlineUuid);
     }
 
     private CompletableFuture<Integer> fetchAndCacheAccountId(String username, String lowerUsername, long registrationTimeMillis, @Nullable UUID offlineUuid) {
-        messageManager.logDebug("Account ID cache miss/negative-hit for: " + lowerUsername);
         return databaseManager.findAccountIdAsync(lowerUsername)
                 .thenComposeAsync(accountIdOpt -> {
                     if (accountIdOpt != null) {
@@ -73,13 +81,13 @@ public class PlayerDataManager {
                 }, databaseExecutor);
     }
 
-
+    // recordSuccessfulLoginAsync remains async
     public CompletableFuture<Void> recordSuccessfulLoginAsync(String username, String ipAddress, long loginTimeMillis) {
         messageManager.logDebug("Recording successful login for " + username + " from IP " + ipAddress);
         return getOrCreateAccountIdAsync(username, loginTimeMillis, null).thenComposeAsync(accountId -> {
-            if (accountId == null) { // Should not happen if getOrCreate handles errors, but check anyway
+            if (accountId == null) {
                 messageManager.logError("Cannot record login: Account ID not found or creation failed earlier for player " + username + ".");
-                return CompletableFuture.completedFuture(null); // Or completed exceptionally
+                return CompletableFuture.completedFuture(null);
             }
             CompletableFuture<Void> updateLoginTime = databaseManager.updateLastLoginAsync(accountId, loginTimeMillis);
             CompletableFuture<Void> recordIp = databaseManager.recordIpUsageAsync(accountId, ipAddress, loginTimeMillis);
@@ -87,7 +95,7 @@ public class PlayerDataManager {
         }, databaseExecutor);
     }
 
-
+    // getAccountIdAsync remains async
     public CompletableFuture<Optional<Integer>> getAccountIdAsync(String username) {
         String lowerUsername = username.toLowerCase();
         Optional<Integer> cachedIdOptional = accountIdCache.getIfPresent(lowerUsername);
@@ -102,20 +110,53 @@ public class PlayerDataManager {
     }
 
 
-    public CompletableFuture<Collection<String>> getAllUsernamesLowerAsync() { // <-- Return Collection
+    // --- MODIFIED METHOD ---
+    /**
+     * Synchronously retrieves all usernames in lowercase from the cache or database.
+     * WARNING: This method now blocks if a cache refresh is needed!
+     *
+     * @return Collection<String> of usernames.
+     */
+    public Collection<String> getAllUsernamesLowerSync() { // <-- RENAMED and made SYNCHRONOUS
         long now = System.currentTimeMillis();
         if (allUsernamesCache != null && !allUsernamesCache.isEmpty() && (now - lastUsernameCacheUpdateTime < USERNAME_CACHE_DURATION_MS)) {
             messageManager.logDebug("Using cached username list (" + allUsernamesCache.size() + " entries).");
-            return CompletableFuture.completedFuture(Collections.unmodifiableCollection(allUsernamesCache));
+            return Collections.unmodifiableCollection(allUsernamesCache);
         }
-        return refreshAllUsernamesCacheAsync();
+        // Refresh synchronously and block
+        return refreshAllUsernamesCacheSync(); // <-- Call the new sync refresh
     }
 
+    // --- MODIFIED METHOD ---
+    /**
+     * Synchronously refreshes the all-usernames cache from the database.
+     * WARNING: This method BLOCKS the calling thread!
+     *
+     * @return Collection<String> of usernames.
+     */
+    private Collection<String> refreshAllUsernamesCacheSync() { // <-- RENAMED and made SYNCHRONOUS
+        messageManager.logDebug("Refreshing all-usernames cache from database (SYNCHRONOUSLY)...");
+        try {
+            // Block and wait for the database result using join()
+            Set<String> usernames = databaseManager.getAllUsernamesLowerAsync().join(); // <-- BLOCKING CALL
 
-    private CompletableFuture<Collection<String>> refreshAllUsernamesCacheAsync() { // <-- Return Collection
-        messageManager.logDebug("Refreshing all-usernames cache from database...");
-        return databaseManager.getAllUsernamesLowerAsync().thenApplyAsync(usernames -> {
             messageManager.logDebug("Username cache refreshed. Found " + usernames.size() + " usernames.");
+            Set<String> newCache = ConcurrentHashMap.newKeySet(usernames.size());
+            newCache.addAll(usernames);
+            this.allUsernamesCache = newCache;
+            this.lastUsernameCacheUpdateTime = System.currentTimeMillis();
+            return Collections.unmodifiableCollection(this.allUsernamesCache);
+        } catch (Exception e) {
+            messageManager.logError("Failed to synchronously refresh username cache!", e);
+            return Collections.emptyList(); // Return empty on error
+        }
+    }
+
+    // --- Keep original async refresh for initial load if desired ---
+    private CompletableFuture<Collection<String>> refreshAllUsernamesCacheAsync() {
+        messageManager.logDebug("Refreshing all-usernames cache from database (ASYNCHRONOUSLY - for internal use)...");
+        return databaseManager.getAllUsernamesLowerAsync().thenApplyAsync(usernames -> {
+            messageManager.logDebug("Async Username cache refreshed. Found " + usernames.size() + " usernames.");
             Set<String> newCache = ConcurrentHashMap.newKeySet(usernames.size());
             newCache.addAll(usernames);
             this.allUsernamesCache = newCache;
@@ -125,13 +166,14 @@ public class PlayerDataManager {
     }
 
 
+    // --- Other methods remain the same ---
     public CompletableFuture<Optional<AccountDetails>> getAccountDetailsAsync(String username) { return databaseManager.getAccountDetailsAsync(username); }
     public CompletableFuture<List<IpHistoryRecord>> getIpHistoryAsync(String username, int limit) { return getAccountIdAsync(username).thenComposeAsync(accIdOpt -> accIdOpt.map(id -> databaseManager.getIpHistoryAsync(id, limit)).orElse(CompletableFuture.completedFuture(Collections.emptyList())), databaseExecutor); }
     public CompletableFuture<Set<Integer>> getRecentAccountIdsByIp(String ipAddress, long sinceMillis) { return databaseManager.getAccountIdsByIpSinceAsync(ipAddress, sinceMillis); }
     public CompletableFuture<List<String>> getUsernamesByIdsAsync(Collection<Integer> accountIds) { if (accountIds == null || accountIds.isEmpty()) { return CompletableFuture.completedFuture(Collections.emptyList()); } List<CompletableFuture<String>> futures = accountIds.stream().map(databaseManager::findUsernameByIdAsync).toList(); return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).thenApplyAsync(v -> futures.stream().map(CompletableFuture::join).filter(Objects::nonNull).toList(), databaseExecutor); }
 
 
-    public void clearCache() { // <-- Added Method
+    public void clearCache() {
         accountIdCache.invalidateAll();
         if (allUsernamesCache != null) allUsernamesCache.clear();
         lastUsernameCacheUpdateTime = 0;

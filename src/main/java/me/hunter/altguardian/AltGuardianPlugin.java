@@ -20,11 +20,10 @@ import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.util.Collection; // Import Collection
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
+// Removed unused imports
 
 public final class AltGuardianPlugin extends JavaPlugin {
 
@@ -171,14 +170,11 @@ public final class AltGuardianPlugin extends JavaPlugin {
             messageManager.logWarning("Brigadier integration not available/failed (requires Paper). Commands will still work.");
         }
 
-        // --- ASYNCHRONOUS Completion for Players (Database lookup) ---
-        // Use registerAsyncCompletion. The lambda directly returns the
-        // CompletableFuture<Collection<String>> from PlayerDataManager.
-        commandManager.getCommandCompletions().registerAsyncCompletion("@altguardianplayers",
+        // <<< MODIFIED: Use registerCompletion for players (NOW SYNCHRONOUS) >>>
+        // WARNING: This calls the synchronous (blocking) method in PlayerDataManager
+        commandManager.getCommandCompletions().registerCompletion("@altguardianplayers",
                 (BukkitCommandCompletionContext context) ->
-                        playerDataManager.getAllUsernamesLowerAsync()
-                // This is the theoretically correct way. If it fails, it indicates
-                // a deeper compiler/library issue in your specific environment.
+                        playerDataManager.getAllUsernamesLowerSync() // Call the new sync method
         );
 
         // --- SYNCHRONOUS Completion for Static Flags (No I/O) ---
@@ -214,9 +210,8 @@ public final class AltGuardianPlugin extends JavaPlugin {
             currentMessageManager.logDebug("Messages reloaded.");
 
             databaseManager.notifyConfigReloaded();
-            // Ensure clearCache exists in PlayerDataManager
             if (playerDataManager != null) {
-                playerDataManager.clearCache(); // Call existing method
+                playerDataManager.clearCache();
             }
             altDetectionManager.notifyConfigReloaded();
             impersonationManager.notifyConfigReloaded();

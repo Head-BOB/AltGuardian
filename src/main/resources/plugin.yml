@@ -1,7 +1,7 @@
 # Basic information about your plugin
 name: AltGuardian # Corrected name
 main: me.hunter.altguardian.AltGuardianPlugin # Correct main class path
-version: '${project.version}' # Uses version from build.gradle (will resolve to 1.0-ALPHA)
+version: '${version}' # <<< FIXED: Updated version placeholder to match build.gradle
 api-version: '1.21' # Compatible with Minecraft 1.21+ running on Paper/forks
 authors: [ hun1er ] # Your author name
 description: Advanced Alt & Impersonation detection for offline-mode nLogin servers. # Correct description
