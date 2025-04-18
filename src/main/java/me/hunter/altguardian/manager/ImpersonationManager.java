@@ -20,7 +20,7 @@ public class ImpersonationManager {
     private final ConfigManager configManager;
     private final FlagManager flagManager;
     private final MessageManager messageManager;
-    private final ExecutorService databaseExecutor; // Keep for flagManager potentially
+    private final ExecutorService databaseExecutor;
 
     private final LevenshteinDistance levenshtein = LevenshteinDistance.getDefaultInstance();
 
@@ -41,11 +41,9 @@ public class ImpersonationManager {
 
     /**
      * Checks a new username against existing ones for potential impersonation.
-     * WARNING: This now performs the username lookup synchronously if cache is missed.
+     * Uses the synchronous PlayerDataManager method as per previous fix.
      */
     public CompletableFuture<ImpersonationInfo> checkImpersonationOnFirstJoinAsync(String joiningUsername) {
-        // The method signature stays async for the event listener, but the work inside IS synchronous.
-
         if (!configManager.isImpersonationEnabled()) {
             return CompletableFuture.completedFuture(new ImpersonationInfo(ImpersonationCheckResult.PASSED, null));
         }
@@ -66,25 +64,19 @@ public class ImpersonationManager {
 
         messageManager.logDebug("Checking impersonation for " + joiningUsername + " (Threshold: " + threshold + ", IgnoreCase: " + ignoreCase + ")");
 
-        // Wrap the synchronous logic in supplyAsync to keep the method returning a Future,
-        // and allow comparisons to run off-thread, even if data fetch blocks.
         return CompletableFuture.supplyAsync(() -> {
             Collection<String> existingUsernames;
             try {
-                // --- FIX: Call the SYNCHRONOUS method ---
-                existingUsernames = playerDataManager.getAllUsernamesLowerSync();
+                existingUsernames = playerDataManager.getAllUsernamesLowerSync(); // Using sync method
             } catch (Exception e) {
                 messageManager.logError("Failed to get usernames synchronously for impersonation check", e);
-                return new ImpersonationInfo(ImpersonationCheckResult.ERROR, null); // Return error state
+                return new ImpersonationInfo(ImpersonationCheckResult.ERROR, null);
             }
 
             String similarMatch = null;
-            if (existingUsernames != null) { // Defensive check
-                // --- FIX: Loop directly on the Collection (no thenApply needed) ---
+            if (existingUsernames != null) {
                 for (String existing : existingUsernames) {
-                    // Don't compare against self
                     if (ignoreCase ? usernameToCheck.equalsIgnoreCase(existing) : usernameToCheck.equals(existing)) { continue; }
-                    // Don't check against other exempt usernames
                     if (configManager.isImpersonationUsernameExempt(existing)) { continue; }
 
                     int distance = levenshtein.apply(usernameToCheck, existing);
@@ -98,16 +90,18 @@ public class ImpersonationManager {
                 messageManager.logWarning("Received null username collection from sync method.");
             }
 
-
-            // --- Handle Result (Remains the same logic, just not nested) ---
+            // --- Handle Result ---
             if (similarMatch != null) {
                 String action = configManager.getImpersonationActionOnRegister();
                 String flagReason = "Potential Impersonation (Similar to: " + similarMatch + ")";
+
                 if (!"NONE".equals(action)) {
+                    // --- FIX: Add placeholders for admin-notify-impersonation ---
                     messageManager.broadcastToPermission("altguardian.notify", "admin-notify-impersonation",
-                            MessageManager.player(joiningUsername),
-                            MessageManager.similarTo(similarMatch),
-                            MessageManager.action(action));
+                            MessageManager.player(joiningUsername), // {player}
+                            MessageManager.similarTo(similarMatch), // {similar_to}
+                            MessageManager.action(action)           // {action}
+                    );
                 }
                 switch (action) {
                     case "PREVENT":
@@ -116,7 +110,6 @@ public class ImpersonationManager {
                     case "FLAG":
                         messageManager.logDebug("Action FLAG for impersonation of " + joiningUsername);
                         try {
-                            // Flagging still uses async method but we join() here
                             flagManager.addFlagAsync(joiningUsername, flagReason, "AutoDetect").join();
                             return new ImpersonationInfo(ImpersonationCheckResult.FLAG, similarMatch);
                         } catch (Exception e) {
@@ -136,11 +129,9 @@ public class ImpersonationManager {
                 messageManager.logDebug("Impersonation check passed for " + joiningUsername);
                 return new ImpersonationInfo(ImpersonationCheckResult.PASSED, null);
             }
-        }, databaseExecutor); // Execute the comparison block asynchronously
+        }, databaseExecutor);
     }
 
-
-    /** Call this method when config reloads */
     public void notifyConfigReloaded() {
         messageManager.logDebug("ImpersonationManager notified of config reload.");
     }

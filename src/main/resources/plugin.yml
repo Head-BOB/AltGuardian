@@ -1,33 +1,37 @@
 # Basic information about your plugin
-name: AltGuardian # Corrected name
-main: me.hunter.altguardian.AltGuardianPlugin # Correct main class path
-version: '${version}' # <<< FIXED: Updated version placeholder to match build.gradle
-api-version: '1.21' # Compatible with Minecraft 1.21+ running on Paper/forks
-authors: [ hun1er ] # Your author name
-description: Advanced Alt & Impersonation detection for offline-mode nLogin servers. # Correct description
-website: http://api.mallulifesteal.fun # Optional: Your server's website
+name: AltGuardian
+main: me.hunter.altguardian.AltGuardianPlugin
+version: '${version}' # Correct placeholder
+api-version: '1.21'
+authors: [ hun1er ]
+description: Advanced Alt & Impersonation detection for offline-mode nLogin servers.
+website: http://api.mallulifesteal.fun
 
 # --- Dependencies ---
-# IMPORTANT: AltGuardian requires nLogin to be installed and functional.
-# It relies on nLogin handling the actual password authentication.
 depend:
   - nLogin
 
+# --- Libraries (NEW SECTION) ---
+# Declare the libraries your plugin bundles (Adventure in this case)
+# Use the Maven coordinates matching your build.gradle
+libraries:
+  - net.kyori:adventure-api:4.17.0
+  - net.kyori:adventure-text-minimessage:4.17.0
+  - net.kyori:adventure-platform-bukkit:4.3.2
+
 # --- Permissions ---
-# Defines permissions players/admins need to use commands or features.
 permissions:
   altguardian.admin:
     description: Grants access to all AltGuardian admin commands.
-    default: op # Only server operators have this by default
+    default: op
     children:
-      # Gives altguardian.admin holders all the permissions below automatically
       altguardian.command.check: true
       altguardian.command.checkip: true
       altguardian.command.migrate: true
       altguardian.command.exempt: true
       altguardian.command.flag: true
       altguardian.command.reload: true
-      altguardian.notify: true # Allows receiving admin notifications
+      altguardian.notify: true
 
   altguardian.command.check:
     description: Allows checking player alt/ip info (/ag check <player>).
@@ -52,7 +56,4 @@ permissions:
     default: op
 
 # --- Commands ---
-# Commands are registered via code using ACF (Aikar Command Framework).
-# This section is not strictly needed when using ACF's registration method.
-# It can be left empty or removed.
 commands: {}

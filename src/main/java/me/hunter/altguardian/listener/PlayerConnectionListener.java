@@ -8,6 +8,7 @@ import me.hunter.altguardian.manager.FlagManager;
 import me.hunter.altguardian.manager.ImpersonationManager;
 import me.hunter.altguardian.manager.PlayerDataManager;
 import net.kyori.adventure.text.Component;
+// Import removed: import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer; // Not needed for event.disallow
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -55,18 +56,16 @@ public class PlayerConnectionListener implements Listener {
         final String username = event.getName();
         final InetAddress address = event.getAddress();
         final UUID playerUUID = event.getUniqueId();
-        String ipAddress = "UNKNOWN_IP"; // Default
+        String ipAddress = "UNKNOWN_IP";
 
-        // <<< Simplified IP Address retrieval slightly based on warning >>>
         try {
-            if (address != null) { // Keep basic null check just in case
+            if (address != null) {
                 ipAddress = address.getHostAddress();
-                if (ipAddress == null) { // Host address itself could theoretically be null
+                if (ipAddress == null) {
                     ipAddress = "UNKNOWN_IP";
                 }
             }
         } catch (Exception e) {
-            // Catch potential errors during getHostAddress if address object is weird
             messageManager.logWarning("Error getting host address for " + username + ": " + e.getMessage());
             ipAddress = "UNKNOWN_IP";
         }
@@ -81,37 +80,67 @@ public class PlayerConnectionListener implements Listener {
 
         // --- Impersonation Check ---
         CompletableFuture<ImpersonationManager.ImpersonationInfo> impersonationFuture;
-        if (configManager.isImpersonationEnabled()) { impersonationFuture = impersonationManager.checkImpersonationOnFirstJoinAsync(username); }
-        else { impersonationFuture = CompletableFuture.completedFuture(new ImpersonationManager.ImpersonationInfo(ImpersonationManager.ImpersonationCheckResult.PASSED, null)); }
+        if (configManager.isImpersonationEnabled()) {
+            // Ensure ImpersonationManager uses the correct PlayerDataManager method internally
+            impersonationFuture = impersonationManager.checkImpersonationOnFirstJoinAsync(username);
+        } else {
+            impersonationFuture = CompletableFuture.completedFuture(new ImpersonationManager.ImpersonationInfo(ImpersonationManager.ImpersonationCheckResult.PASSED, null));
+        }
 
         try {
+            // Use a reasonable timeout
             ImpersonationManager.ImpersonationInfo impersonationInfo = impersonationFuture.get(10, TimeUnit.SECONDS);
             messageManager.logDebug("Impersonation check result for " + username + ": " + impersonationInfo.result());
 
             switch (impersonationInfo.result()) {
                 case PREVENT:
                     final String similarUser = impersonationInfo.similarMatch() != null ? impersonationInfo.similarMatch() : "another player";
-                    final Component kickComponent = messageManager.get("prevent-impersonation", MessageManager.username(username), MessageManager.similarTo(similarUser));
-                    // Deprecated method, but correct usage with serializer
+                    // --- FIX: Add placeholders for prevent-impersonation message ---
+                    final Component kickComponent = messageManager.get("prevent-impersonation",
+                            MessageManager.username(username), // {username}
+                            MessageManager.similarTo(similarUser) // {similar_to}
+                    );
+                    // Use the modern disallow method
                     event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, kickComponent);
                     messageManager.logInfo("Player " + username + " connection prevented due to impersonation similarity to " + similarUser);
-                    return;
-                case FLAG: messageManager.logDebug("Player " + username + " flagged for impersonation, allowing login."); break;
-                case WARN: messageManager.logDebug("Player " + username + " triggered impersonation warning, allowing login."); break;
-                case ERROR: messageManager.logError("Impersonation check resulted in ERROR for " + username + ". Allowing login as failsafe."); break;
-                case PASSED: default: messageManager.logDebug("Impersonation check passed for " + username + "."); break;
+                    return; // Stop processing if disallowed
+                case FLAG:
+                    messageManager.logDebug("Player " + username + " flagged for impersonation, allowing login.");
+                    break;
+                case WARN:
+                    messageManager.logDebug("Player " + username + " triggered impersonation warning, allowing login.");
+                    break;
+                case ERROR:
+                    messageManager.logError("Impersonation check resulted in ERROR for " + username + ". Allowing login as failsafe.");
+                    break;
+                case PASSED:
+                default:
+                    messageManager.logDebug("Impersonation check passed for " + username + ".");
+                    break;
             }
-        } catch (TimeoutException e) { messageManager.logError("Impersonation check timed out for " + username + "! Allowing login as failsafe.", e); }
-        catch (Exception e) { messageManager.logError("Error during impersonation check for " + username + ". Allowing login as failsafe.", e); }
+        } catch (TimeoutException e) {
+            messageManager.logError("Impersonation check timed out for " + username + "! Allowing login as failsafe.", e);
+        } catch (Exception e) {
+            // Handle potential exceptions from join() if the future completed exceptionally
+            messageManager.logError("Error during impersonation check for " + username + ". Allowing login as failsafe.", e);
+        }
 
         // --- Initial Account Record Creation ---
+        // Run this only if the player wasn't disallowed above
         try {
             long now = Instant.now().toEpochMilli();
+            // Use join() here as pre-login needs this done before proceeding
             playerDataManager.getOrCreateAccountIdAsync(username, now, playerUUID)
-                    .exceptionally(ex -> { messageManager.logError("Failed to get/create account ID for " + username + " during pre-login!", ex); return null; })
-                    .join();
+                    .exceptionally(ex -> {
+                        messageManager.logError("Failed to get/create account ID for " + username + " during pre-login!", ex);
+                        return null; // Return null or a specific value indicating failure
+                    })
+                    .join(); // Wait for completion
             messageManager.logDebug("Ensured account record exists for " + username);
-        } catch(Exception e) { messageManager.logError("Critical error ensuring account record for " + username + " during pre-login. Login might fail.", e); }
+        } catch(Exception e) {
+            // Log critical error, but potentially allow login if this fails? Depends on policy.
+            messageManager.logError("Critical error ensuring account record for " + username + " during pre-login. Login might fail or lack tracking.", e);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -120,31 +149,65 @@ public class PlayerConnectionListener implements Listener {
         final String username = player.getName();
         String ipAddress = "UNKNOWN_IP";
         try {
-            if (event.getAddress() != null) ipAddress = event.getAddress().getHostAddress();
+            if (event.getAddress() != null) {
+                ipAddress = event.getAddress().getHostAddress();
+            }
             if (ipAddress == null) ipAddress = "UNKNOWN_IP";
-        } catch (Exception e) { messageManager.logWarning("Error getting host address for " + username + " in PlayerLoginEvent: " + e.getMessage()); }
+        } catch (Exception e) {
+            messageManager.logWarning("Error getting host address for " + username + " in PlayerLoginEvent: " + e.getMessage());
+        }
 
         final long now = Instant.now().toEpochMilli();
 
-        if ("UNKNOWN_IP".equals(ipAddress)) { messageManager.logWarning("IP address unknown for " + username + " at PlayerLoginEvent. Skipping AltGuardian checks."); event.allow(); return; }
+        if ("UNKNOWN_IP".equals(ipAddress)) {
+            messageManager.logWarning("IP address unknown for " + username + " at PlayerLoginEvent. Skipping AltGuardian checks.");
+            event.allow(); // Allow login if IP is unknown
+            return;
+        }
 
         messageManager.logDebug("PlayerLoginEvent triggered for " + username + " [" + ipAddress + "]");
 
         // --- Alt Check ---
         CompletableFuture<Boolean> altCheckFuture;
-        if (configManager.isAltDetectionEnabled()) { altCheckFuture = altDetectionManager.checkAltStatusOnLoginAsync(player, username, ipAddress, now); }
-        else { altCheckFuture = CompletableFuture.completedFuture(false); }
+        if (configManager.isAltDetectionEnabled()) {
+            altCheckFuture = altDetectionManager.checkAltStatusOnLoginAsync(player, username, ipAddress, now);
+        } else {
+            altCheckFuture = CompletableFuture.completedFuture(false); // Assume login allowed if disabled
+        }
 
         try {
-            boolean disallowLogin = altCheckFuture.get(10, TimeUnit.SECONDS);
+            // Wait for the alt check result with a timeout
+            boolean disallowLogin = altCheckFuture.get(10, TimeUnit.SECONDS); // Throws TimeoutException
             messageManager.logDebug("Alt check result for " + username + ": Disallow = " + disallowLogin);
-            if (disallowLogin) { event.setResult(PlayerLoginEvent.Result.KICK_OTHER); messageManager.logInfo("Player " + username + " login denied due to alt limit check result."); return; }
+
+            if (disallowLogin) {
+                // Kick message is handled inside checkAltStatusOnLoginAsync now
+                // We just need to set the result based on the boolean returned
+                event.setResult(PlayerLoginEvent.Result.KICK_OTHER);
+                // The actual kick message component was already prepared and scheduled
+                // by AltDetectionManager if the action was KICK.
+                messageManager.logInfo("Player " + username + " login denied due to alt limit check result.");
+                return; // Stop processing
+            }
 
             // --- Record Login IF Alt Check Passed ---
-            playerDataManager.recordSuccessfulLoginAsync(username, ipAddress, now) .exceptionally(ex -> { messageManager.logError("Failed to record successful login details for " + username + " after checks passed.", ex); return null; });
+            // Don't wait for this, let it run in the background
+            playerDataManager.recordSuccessfulLoginAsync(username, ipAddress, now)
+                    .exceptionally(ex -> {
+                        messageManager.logError("Failed to record successful login details for " + username + " after checks passed.", ex);
+                        return null;
+                    });
             messageManager.logDebug("Login allowed and details queued for recording for " + username);
-        } catch (TimeoutException e) { messageManager.logError("Alt check timed out for " + username + "! Allowing login as failsafe.", e); event.allow(); }
-        catch (Exception e) { messageManager.logError("Error during alt check or recording login for " + username + ". Allowing login as failsafe.", e); event.allow(); }
+            event.allow(); // Explicitly allow
+
+        } catch (TimeoutException e) {
+            messageManager.logError("Alt check timed out for " + username + "! Allowing login as failsafe.", e);
+            event.allow(); // Allow login if check times out
+        } catch (Exception e) {
+            // Catch other exceptions like CompletionException from the future
+            messageManager.logError("Error during alt check or recording login for " + username + ". Allowing login as failsafe.", e);
+            event.allow(); // Allow login if any other error occurs
+        }
     }
 
 
@@ -155,54 +218,54 @@ public class PlayerConnectionListener implements Listener {
 
         messageManager.logDebug("PlayerJoinEvent triggered for " + username);
 
-        // Check if player needs an impersonation warning
+        // Check if player needs an impersonation warning (uses flags set during pre-login)
         flagManager.getFlagsAsync(username).thenAcceptAsync(flags -> {
             Optional<String> impersonationFlagOpt = flags.stream()
                     .filter(flag -> flag != null && flag.startsWith("Potential Impersonation (Similar to: "))
                     .findFirst();
 
             if (impersonationFlagOpt.isPresent()) {
-                // <<< Call extracted helper method >>>
                 String similarTo = extractSimilarToFromFlag(impersonationFlagOpt.get());
-
                 String configAction = configManager.getImpersonationActionOnRegister();
+
+                // Send warning only if action was WARN or FLAG (PREVENT kicks before join)
                 if ("WARN".equals(configAction) || "FLAG".equals(configAction)) {
-                    Component warnMessage = messageManager.get("warn-impersonation", MessageManager.username(username), MessageManager.similarTo(similarTo));
+                    // --- FIX: Add placeholders for warn-impersonation message ---
+                    Component warnMessage = messageManager.get("warn-impersonation",
+                            MessageManager.username(username),   // {username}
+                            MessageManager.similarTo(similarTo) // {similar_to}
+                    );
+                    // Schedule message sending back to main thread
                     Bukkit.getScheduler().runTask(plugin, () -> {
                         if (player.isOnline()) {
-                            // <<< Suppress the try-with-resources warning here >>>
-                            // Reason: BukkitAudiences instance is managed by plugin lifecycle
-                            //noinspectionresource closing the audience here would break it for other uses
+                            // Send message using Adventure audiences
+                            //noinspectionresource
                             plugin.adventure().player(player).sendMessage(warnMessage);
                         }
                     });
                 }
             }
-        }, plugin.getDatabaseManager().getExecutor());
+        }, plugin.getDatabaseManager().getExecutor()); // Run DB check off main thread
     }
 
     /**
      * Helper method to extract the 'similar to' username from the flag string.
-     * @param impersonationFlag The full flag string.
-     * @return The extracted username, or a default string if parsing fails.
      */
     private String extractSimilarToFromFlag(@NotNull String impersonationFlag) {
         final String prefix = "Similar to: ";
         final String defaultName = "another player";
         try {
             int startIndex = impersonationFlag.indexOf(prefix);
-            if (startIndex == -1) return defaultName; // Prefix not found
+            if (startIndex == -1) return defaultName;
 
-            startIndex += prefix.length(); // Move start index past the prefix
+            startIndex += prefix.length();
 
             int endIndex = impersonationFlag.lastIndexOf(')');
-            if (endIndex == -1 || endIndex <= startIndex) return defaultName; // Closing parenthesis not found or invalid position
+            if (endIndex == -1 || endIndex <= startIndex) return defaultName;
 
             return impersonationFlag.substring(startIndex, endIndex).trim();
         } catch (Exception e) {
-            // Log parsing error? Optional, as it might spam if flags are malformed often.
-            // messageManager.logWarning("Failed to parse 'similarTo' from flag: " + impersonationFlag);
-            return defaultName; // Return default on any parsing error
+            return defaultName;
         }
     }
 }

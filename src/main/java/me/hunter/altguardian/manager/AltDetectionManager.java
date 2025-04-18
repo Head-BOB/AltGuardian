@@ -11,30 +11,28 @@ import org.bukkit.entity.Player;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors; // Import Collectors
 
 /**
  * Handles the logic for detecting potential alt accounts based on IP address usage.
  */
 public class AltDetectionManager {
 
-    private final AltGuardianPlugin plugin; // <<< Added field
+    private final AltGuardianPlugin plugin;
     private final PlayerDataManager playerDataManager;
     private final ConfigManager configManager;
     private final MessageManager messageManager;
-    private final FlagManager flagManager; // Added dependency
-    private final ExecutorService databaseExecutor; // <<< Added field
+    private final FlagManager flagManager;
+    private final ExecutorService databaseExecutor;
 
 
-    // Constructor updated to accept plugin
     public AltDetectionManager(AltGuardianPlugin plugin, PlayerDataManager playerDataManager, ConfigManager configManager, MessageManager messageManager, FlagManager flagManager) {
-        this.plugin = plugin; // <<< Store plugin
+        this.plugin = plugin;
         this.playerDataManager = playerDataManager;
         this.configManager = configManager;
         this.messageManager = messageManager;
-        this.flagManager = flagManager; // Store FlagManager
-        // Get executor from PlayerDataManager's DatabaseManager reference (requires PlayerDataManager to expose it or pass DBManager here too)
-        // Assuming PlayerDataManager provides access or we get it from plugin:
-        this.databaseExecutor = plugin.getDatabaseManager().getExecutor(); // <<< Get executor
+        this.flagManager = flagManager;
+        this.databaseExecutor = plugin.getDatabaseManager().getExecutor();
     }
 
     /**
@@ -50,41 +48,39 @@ public class AltDetectionManager {
     public CompletableFuture<Boolean> checkAltStatusOnLoginAsync(Player playerBukkit, String username, String ipAddress, long loginTimeMillis) {
         if (!configManager.isAltDetectionEnabled()) {
             messageManager.logDebug("Alt detection disabled, skipping check for " + username);
-            return CompletableFuture.completedFuture(false); // Allow login
+            return CompletableFuture.completedFuture(false);
         }
         if (configManager.isIpExempt(ipAddress)) {
             messageManager.logDebug("IP " + ipAddress + " is exempt, skipping alt check for " + username);
-            return CompletableFuture.completedFuture(false); // Allow login
+            return CompletableFuture.completedFuture(false);
         }
         if (configManager.isAltUsernameExempt(username)) {
             messageManager.logDebug("User " + username + " is exempt, skipping alt check.");
-            return CompletableFuture.completedFuture(false); // Allow login
+            return CompletableFuture.completedFuture(false);
         }
 
         final int maxAccounts = configManager.getMaxAccountsPerIp();
         if (maxAccounts <= 0) {
             messageManager.logDebug("Max accounts per IP is <= 0, skipping alt check for " + username);
-            return CompletableFuture.completedFuture(false); // Allow login (feature disabled)
+            return CompletableFuture.completedFuture(false);
         }
 
         final long checkSinceMillis = loginTimeMillis - (configManager.getCheckTimeframeSeconds() * 1000);
 
         messageManager.logDebug("Checking alts for " + username + " from " + ipAddress + " (Max: " + maxAccounts + ", Timeframe: " + configManager.getCheckTimeframeSeconds() + "s)");
 
-        // Get account IDs that used this IP recently (runs on DB executor via PlayerDataManager)
         return playerDataManager.getRecentAccountIdsByIp(ipAddress, checkSinceMillis)
                 .thenComposeAsync(recentAccountIds -> {
                     messageManager.logDebug("Found " + recentAccountIds.size() + " recent unique account IDs for IP " + ipAddress);
 
-                    // Get the ID of the player currently logging in (might be new or existing)
-                    // Runs on DB executor via PlayerDataManager
-                    return playerDataManager.getAccountIdAsync(username).thenComposeAsync(currentAccountIdOpt -> {
+                    // Use getOrCreate to ensure the player has an ID before checking limits
+                    // Pass loginTimeMillis as the registration time if they are new
+                    return playerDataManager.getOrCreateAccountIdAsync(username, loginTimeMillis, playerBukkit.getUniqueId()).thenComposeAsync(currentAccountId -> {
                         // Create a mutable copy to potentially add the current user
                         Set<Integer> allRelevantIds = new java.util.HashSet<>(recentAccountIds);
 
-                        // Add the current player's ID to the set if they have one,
-                        // otherwise they count as a potential new account towards the limit.
-                        currentAccountIdOpt.ifPresent(allRelevantIds::add);
+                        // Add the current player's ID to the set
+                        allRelevantIds.add(currentAccountId); // Add the ID we just got/created
 
                         final int distinctAccountCount = allRelevantIds.size();
                         messageManager.logDebug("Distinct account count including " + username + " from " + ipAddress + ": " + distinctAccountCount);
@@ -92,70 +88,62 @@ public class AltDetectionManager {
                         if (distinctAccountCount > maxAccounts) {
                             messageManager.logInfo("Alt limit exceeded for user " + username + " from IP " + ipAddress + " (" + distinctAccountCount + "/" + maxAccounts + ")");
 
-                            // Limit exceeded, determine action
                             final String action = configManager.getAltLimitExceededAction();
                             final String flagReason = "Potential Alt (Limit: " + maxAccounts + " IP: " + ipAddress + ")";
 
-                            // Fetch usernames for notification message (runs on DB executor via PlayerDataManager)
+                            // Fetch usernames for notification message
                             return playerDataManager.getUsernamesByIdsAsync(allRelevantIds).thenApplyAsync(names -> {
-                                String involvedUsers = String.join(", ", names);
-                                // Broadcast notification (MessageManager handles thread safety for broadcast)
+                                String involvedUsers = names.stream().collect(Collectors.joining(", ")); // Simple join
+
+                                // --- FIX: Add placeholders for admin-notify-alt-limit ---
                                 messageManager.broadcastToPermission("altguardian.notify", "admin-notify-alt-limit",
-                                        MessageManager.player(username),
-                                        MessageManager.ip(ipAddress),
-                                        MessageManager.count(distinctAccountCount),
-                                        MessageManager.max(maxAccounts),
-                                        MessageManager.action(action),
-                                        Placeholder.unparsed("involved_players", involvedUsers) // Add involved players placeholder
+                                        MessageManager.player(username),            // {player}
+                                        MessageManager.ip(ipAddress),               // {ip}
+                                        MessageManager.count(distinctAccountCount), // {count}
+                                        MessageManager.max(maxAccounts),            // {max}
+                                        MessageManager.action(action),              // {action}
+                                        Placeholder.unparsed("involved_players", involvedUsers) // Use the generated list
                                 );
 
                                 if ("FLAG".equals(action)) {
-                                    // Flag the user currently logging in
-                                    // Need to ensure flag is added before allowing login, use join() here
                                     try {
                                         flagManager.addFlagAsync(username, flagReason, "AutoDetect").join();
                                     } catch (Exception e) {
                                         messageManager.logError("Failed to add alt flag for " + username, e);
-                                        // Allow login even if flagging failed? Or treat as error? Let's allow.
                                     }
-                                    return false; // Allow login, but flagged (or attempted flag)
+                                    return false; // Allow login
                                 } else if ("KICK".equals(action)) {
-                                    // We need to kick the player. This MUST happen on the main thread.
+                                    // --- FIX: Add placeholders for kick-alt-limit-exceeded ---
                                     final Component kickMessage = messageManager.get("kick-alt-limit-exceeded",
-                                            MessageManager.count(distinctAccountCount),
-                                            MessageManager.max(maxAccounts));
-                                    // Schedule the kick on the main server thread
-                                    Bukkit.getScheduler().runTask(plugin, () -> { // <<< Use Bukkit scheduler for main thread task
-                                        // Check if player is still online before kicking
+                                            MessageManager.count(distinctAccountCount), // {count}
+                                            MessageManager.max(maxAccounts)             // {max}
+                                    );
+                                    // Schedule kick to main thread
+                                    Bukkit.getScheduler().runTask(plugin, () -> {
                                         if (playerBukkit != null && playerBukkit.isOnline()) {
-                                            playerBukkit.kick(kickMessage); // Use component kick
+                                            playerBukkit.kick(kickMessage);
                                         }
                                     });
-                                    return true; // Indicate login should be disallowed
-                                } else if ("NOTIFY".equals(action)) {
-                                    // Only notify, already done above.
-                                    return false; // Allow login
-                                } else { // NONE or unknown action
+                                    return true; // Disallow login
+                                } else { // NOTIFY or NONE
                                     return false; // Allow login
                                 }
-                            }, databaseExecutor); // Run the final name mapping and action logic on DB executor
-
+                            }, databaseExecutor); // Execute name lookup and action logic on DB executor
 
                         } else {
                             // Limit not exceeded
                             messageManager.logDebug("Alt check passed for " + username + " from " + ipAddress + ".");
                             return CompletableFuture.completedFuture(false); // Allow login
                         }
-                    }, databaseExecutor); // Ensure the composition after getAccountIdAsync runs on DB executor
+                    }, databaseExecutor); // Continue on DB executor after getting/creating ID
 
-                }, databaseExecutor); // Ensure the composition after getRecentAccountIdsByIp runs on DB executor
+                }, databaseExecutor); // Run initial IP check on DB executor
     }
 
 
     /** Call this method when config reloads if any internal state needs updating */
     public void notifyConfigReloaded() {
         messageManager.logDebug("AltDetectionManager notified of config reload.");
-        // No cached config values here currently, but could clear internal rate limiters etc. if added later.
     }
 
 }

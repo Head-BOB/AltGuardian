@@ -23,7 +23,6 @@ import org.bukkit.scheduler.BukkitTask;
 import java.util.List;
 import java.util.Objects;
 import java.util.logging.Level;
-// Removed unused imports
 
 public final class AltGuardianPlugin extends JavaPlugin {
 
@@ -162,6 +161,16 @@ public final class AltGuardianPlugin extends JavaPlugin {
         // Initialize the PaperCommandManager
         commandManager = new PaperCommandManager(this);
 
+        // --- FIX: Enable unstable 'help' API ---
+        try {
+            commandManager.enableUnstableAPI("help"); // Add this line
+            getLogger().info("Enabled unstable ACF 'help' API.");
+        } catch (Exception e) {
+            messageManager.logWarning("Failed to enable unstable ACF 'help' API: " + e.getMessage());
+            // Help command might not work as expected
+        }
+        // --- End Fix ---
+
         // Enable Brigadier integration (optional, Paper-specific)
         try {
             commandManager.enableUnstableAPI("brigadier");
@@ -170,15 +179,13 @@ public final class AltGuardianPlugin extends JavaPlugin {
             messageManager.logWarning("Brigadier integration not available/failed (requires Paper). Commands will still work.");
         }
 
-        // <<< MODIFIED: Use registerCompletion for players (NOW SYNCHRONOUS) >>>
-        // WARNING: This calls the synchronous (blocking) method in PlayerDataManager
+        // Using synchronous completion for players as workaround
         commandManager.getCommandCompletions().registerCompletion("@altguardianplayers",
                 (BukkitCommandCompletionContext context) ->
-                        playerDataManager.getAllUsernamesLowerSync() // Call the new sync method
+                        playerDataManager.getAllUsernamesLowerSync() // Call the sync method
         );
 
-        // --- SYNCHRONOUS Completion for Static Flags (No I/O) ---
-        // Use registerCompletion and return Collection directly
+        // Synchronous completion for flags
         commandManager.getCommandCompletions().registerCompletion("@flags",
                 context -> List.of("Potential Alt", "Impersonation", "Suspicious Activity")
         );

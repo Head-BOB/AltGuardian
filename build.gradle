@@ -1,9 +1,8 @@
 plugins {
     id 'java'
-    // Shadow plugin for embedding dependencies
-    id 'io.github.goooler.shadow' version '8.1.7' // Latest as of Oct 2023, check for updates: https://github.com/johnrengelman/shadow/releases
-    // Paperweight for Paper API access and development environment
-    id 'io.papermc.paperweight.userdev' version '1.7.1' // Latest as of Oct 2023, check for updates: https://github.com/PaperMC/paperweight/releases
+    // Use the Goooler Shadow fork for better Java 21+ support
+    id 'io.github.goooler.shadow' version '8.1.7'
+    id 'io.papermc.paperweight.userdev' version '1.7.1'
 }
 
 group = 'org.starkmc'
@@ -12,55 +11,40 @@ description = 'Advanced Alt & Impersonation detection for offline-mode nLogin se
 
 repositories {
     mavenCentral()
-    maven {
-        name = "papermc-repo"
-        url = "https://repo.papermc.io/repository/maven-public/" // For Paper API and Adventure
-    }
-    maven {
-        name = "sonatype"
-        url = "https://oss.sonatype.org/content/groups/public/" // Often redundant with Maven Central, kept for compatibility
-    }
-    maven {
-        name = "aikar-repo"
-        url = "https://repo.aikar.co/content/groups/aikar/" // For ACF
-    }
-    // Add a repository for nLogin API if available, e.g.:
-    // maven { url = "https://repo.nickuc.com/repository/maven-public/" } // Hypothetical, verify actual source
+    maven { name = "papermc-repo"; url = "https://repo.papermc.io/repository/maven-public/" }
+    maven { name = "sonatype"; url = "https://oss.sonatype.org/content/groups/public/" }
+    maven { name = "aikar-repo"; url = "https://repo.aikar.co/content/groups/aikar/" }
 }
 
 dependencies {
-    // Paper API - Matches Minecraft 1.21
-    paperweight.paperDevBundle("1.21-R0.1-SNAPSHOT") // Check for latest build: https://repo.papermc.io
+    paperweight.paperDevBundle("1.21-R0.1-SNAPSHOT")
 
-    // Adventure API - Bundled with Paper, use compileOnly and match Paper's version
-    compileOnly("net.kyori:adventure-api:4.17.0") // Verify against Paper 1.21's bundled version
-    compileOnly("net.kyori:adventure-text-minimessage:4.17.0")
-    compileOnly("net.kyori:adventure-platform-bukkit:4.3.2")
+    // --- FIX: Change Adventure scope to implementation ---
+    // Use versions known to be compatible with Paper 1.21
+    // These versions are commonly bundled, but check Paper's specific build if needed
+    implementation("net.kyori:adventure-api:4.17.0")
+    implementation("net.kyori:adventure-text-minimessage:4.17.0")
+    implementation("net.kyori:adventure-platform-bukkit:4.3.2") // This provides BukkitAudiences
 
     // Database dependencies
-    implementation("org.xerial:sqlite-jdbc:3.45.3.0") // Check latest: https://github.com/xerial/sqlite-jdbc/releases
-    implementation("com.zaxxer:HikariCP:5.1.0")      // Check latest: https://github.com/brettwooldridge/HikariCP/releases
-    compileOnly("org.slf4j:slf4j-api:1.7.36")       // Provided by Paper, no need to bundle
+    implementation("org.xerial:sqlite-jdbc:3.45.3.0")
+    implementation("com.zaxxer:HikariCP:5.1.0")
+    compileOnly("org.slf4j:slf4j-api:1.7.36") // Keep compileOnly, provided by server
 
     // String Similarity
-    implementation("org.apache.commons:commons-text:1.12.0") // Check latest: https://commons.apache.org/proper/commons-text/
+    implementation("org.apache.commons:commons-text:1.12.0")
 
     // Command Framework (ACF)
-    implementation("co.aikar:acf-paper:0.5.1-SNAPSHOT") // Check for stable version: https://repo.aikar.co
+    implementation("co.aikar:acf-paper:0.5.1-SNAPSHOT") // Keep snapshot or try 0.5.1 stable
 
     // Caching Library
-    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8") // Check latest: https://github.com/ben-manes/caffeine/releases
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
 
-    // nLogin API - Replace with actual dependency
-    // Option 1: If available via Maven
-    // compileOnly("com.nickuc.login:nlogin-api:VERSION") // Replace VERSION with actual version
-    // Option 2: If using a local JAR
-    // compileOnly(files("libs/nLogin-API.jar")) // Place JAR in 'libs' folder
-    // Note: Without nLogin API, rely on Bukkit events or contact nLogin maintainers for API access
+    // nLogin API Placeholder...
 }
 
-// Java configuration for version 21
-def targetJavaVersion = 21 // Compatible with Paper 1.21 (requires 17+)
+// Java configuration remains the same...
+def targetJavaVersion = 21
 java {
     def javaVersion = JavaVersion.toVersion(targetJavaVersion)
     sourceCompatibility = javaVersion
@@ -77,13 +61,9 @@ tasks.withType(JavaCompile).configureEach {
     }
 }
 
-// Process plugin.yml with version substitution
+// processResources remains the same...
 processResources {
-    def props = [
-            version: version,
-            name: project.name,
-            website: 'http://api.mallulifesteal.fun'
-    ]
+    def props = [version: project.version] // Use project.version here for consistency
     inputs.properties props
     filteringCharset 'UTF-8'
     filesMatching('plugin.yml') {
@@ -92,20 +72,23 @@ processResources {
 }
 
 // Shadow JAR configuration
+// Configure shadowJar task to embed and relocate dependencies
 shadowJar {
     archiveBaseName.set('AltGuardian')
     archiveClassifier.set('')
     archiveVersion.set(project.version.toString())
 
     // Relocate dependencies to prevent conflicts
-    relocate 'org.sqlite', 'org.starkmc.altguardian.libs.sqlite'
+    // relocate 'org.sqlite', 'org.starkmc.altguardian.libs.sqlite' // <<< REMOVE OR COMMENT OUT THIS LINE
     relocate 'com.zaxxer.hikari', 'org.starkmc.altguardian.libs.hikari'
     relocate 'org.apache.commons.text', 'org.starkmc.altguardian.libs.commonstext'
     relocate 'co.aikar.commands', 'org.starkmc.altguardian.libs.acf'
     relocate 'co.aikar.locales', 'org.starkmc.altguardian.libs.acf.locales'
     relocate 'com.github.benmanes.caffeine', 'org.starkmc.altguardian.libs.caffeine'
+
+    // DO NOT relocate org.sqlite
+
+    // Ensure dependencies marked 'implementation' are included
 }
 
-build {
-    dependsOn shadowJar
-}
+build { dependsOn shadowJar }
